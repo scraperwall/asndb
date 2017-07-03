@@ -39,11 +39,12 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 
 // ASN contains information about a netblock
 type ASN struct {
-	Network      *net.IPNet
-	From         *net.IP
-	To           *net.IP
-	ASN          int
-	Organization string
+	Network      *net.IPNet `json:"network"`
+	From         *net.IP    `json:"from"`
+	To           *net.IP    `json:"to"`
+	Cidr         string     `json:"cidr"`
+	ASN          int        `json:"asn"`
+	Organization string     `json:"organization"`
 }
 
 // NewASN creates a new ASN struct based on cidr, asnr and org
@@ -84,6 +85,7 @@ func NewASN(cidr string, asnr string, org string) (*ASN, error) {
 		ASN:          asn,
 		From:         &ip,
 		To:           &lastIP,
+		Cidr:         cidr,
 	}, nil
 }
 
