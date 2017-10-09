@@ -60,7 +60,6 @@ func NewASN(cidr string, asnr string, org string) (*ASN, error) {
 	}
 
 	ip := network.IP.To16()
-	lastIP := network.IP.To16()
 	mask := net.IPMask(make([]byte, net.IPv6len))
 
 	if ip.To4() != nil {
@@ -75,7 +74,11 @@ func NewASN(cidr string, asnr string, org string) (*ASN, error) {
 		mask = network.Mask
 	}
 
+	firstIP := net.IP(make([]byte, 16))
+	lastIP := net.IP(make([]byte, 16))
+
 	for i := range ip {
+		firstIP[i] = ip[i] & mask[i]
 		lastIP[i] = ip[i] | ^mask[i]
 	}
 
@@ -83,7 +86,7 @@ func NewASN(cidr string, asnr string, org string) (*ASN, error) {
 		Network:      network,
 		Organization: org,
 		ASN:          asn,
-		From:         &ip,
+		From:         &firstIP,
 		To:           &lastIP,
 		Cidr:         cidr,
 	}, nil
