@@ -16,6 +16,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/google/btree"
 )
@@ -27,7 +28,8 @@ const (
 
 // ASNDB contains a b-tree of ASNs
 type ASNDB struct {
-	db *btree.BTree
+	db    *btree.BTree
+	mutex sync.Mutex
 }
 
 // Lookup returns the ASN struct of the network that contains ip
@@ -39,6 +41,8 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 		To: &ipNorm,
 	}
 
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
 	a.db.AscendGreaterOrEqual(&dummy, func(item btree.Item) bool {
 		asn = item.(*ASN)
 
@@ -110,8 +114,22 @@ func (a *ASN) Less(bt btree.Item) bool {
 	return bytes.Compare(*a.To, *b.To) < 0
 }
 
+// Reload pulls fresh data from maxmind
+func (a *ASNDB) Reload() error {
+	asndb, err := FromMaxMind()
+	if err != nil {
+		return err
+	}
+
+	a.mutex.Lock()
+	defer a.mutex.Unlock()
+	a.db = asndb
+
+	return nil
+}
+
 // FromMaxMind loads data from maxmind and creates an ASNDB with this fresh data
-func FromMaxMind() (*ASNDB, error) {
+func FromMaxMind() (*btree.BTree, error) {
 	// Get MD5 sum for tar.gz file
 	resp, err := http.Get(asnMd5URL)
 	if err != nil {
@@ -185,7 +203,7 @@ func FromMaxMind() (*ASNDB, error) {
 		return nil, err
 	}
 
-	return &ASNDB{db: tree}, nil
+	return tree, nil
 }
 
 func parseCSV(reader io.Reader) (*btree.BTree, error) {
@@ -220,20 +238,15 @@ func parseCSV(reader io.Reader) (*btree.BTree, error) {
 }
 
 // New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
-func New(fname string) (*ASNDB, error) {
-
-	asnFile, err := os.Open(fname)
-	if err != nil {
-		return nil, fmt.Errorf("Failed to open ASN CSV file %s: %s", fname, err)
+func New() (*ASNDB, error) {
+	db := &ASNDB{
+		mutex: sync.Mutex{},
 	}
-	defer asnFile.Close()
 
-	tree, err := parseCSV(asnFile)
+	err := db.Reload()
 	if err != nil {
 		return nil, err
 	}
 
-	return &ASNDB{
-		db: tree,
-	}, nil
+	return db, nil
 }
