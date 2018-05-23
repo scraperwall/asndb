@@ -52,6 +52,18 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 	return asn
 }
 
+// Size returns the number of networks in the database
+func (a *ASNDB) Size() int {
+	return a.db.Len()
+}
+
+// Each iterates over each element in the database
+func (a *ASNDB) Each(f func(a *ASN) bool) {
+	a.db.Ascend(func(item btree.Item) bool {
+		return f(item.(*ASN))
+	})
+}
+
 // ASN contains information about a netblock
 type ASN struct {
 	Network      *net.IPNet `json:"network"`
