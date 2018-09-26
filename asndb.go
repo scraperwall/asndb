@@ -22,8 +22,10 @@ import (
 )
 
 const (
-	asnURL    = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip"
-	asnMd5URL = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip.md5"
+	asnURL    = "https://files.phlip.it/GeoLite2-ASN-CSV.zip"
+	asnMd5URL = "https://files.phlip.it/GeoLite2-ASN-CSV.zip.md5"
+	//asnURL    = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip"
+	//asnMd5URL = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip.md5"
 )
 
 // ASNDB contains a b-tree of ASNs
@@ -161,6 +163,10 @@ func FromMaxMind() (*btree.BTree, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("%s status %d", asnURL, resp.StatusCode)
+	}
+
 	bodyData, err := ioutil.ReadAll(resp.Body)
 	if err != nil {
 		return nil, err
@@ -172,6 +178,7 @@ func FromMaxMind() (*btree.BTree, error) {
 		return nil, err
 	}
 	if string(md5Sum) != hex.EncodeToString(hash.Sum(nil)) {
+		log.Println("asndb checksum mismatch")
 		return nil, fmt.Errorf("checksum mismatch: %s != %s", md5Sum, hash.Sum(nil))
 	}
 
