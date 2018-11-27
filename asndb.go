@@ -18,6 +18,7 @@ import (
 	"strings"
 	"sync"
 
+	"git.scraperwall.com/scw/ip"
 	"github.com/google/btree"
 )
 
@@ -30,13 +31,26 @@ const (
 
 // ASNDB contains a b-tree of ASNs
 type ASNDB struct {
-	db    *btree.BTree
-	mutex sync.Mutex
+	db      *btree.BTree
+	mutex   sync.Mutex
+	privIPs *ip.IP
 }
 
 // Lookup returns the ASN struct of the network that contains ip
 func (a *ASNDB) Lookup(ip net.IP) *ASN {
 	var asn *ASN
+
+	privNet := a.privIPs.Network(ip)
+	if privNet != nil {
+		return NewASN(privNet.String(), -1, "Private Network")
+	}
+
+	if a.privIPs.IsPrivate(ip) {
+		firstDot := strings.Index(ip.String(), ".")
+		firstNum := ip.String()[0:firstDot]
+
+		privNet := a.privIPs.
+	}
 
 	ipNorm := ip.To16()
 	dummy := ASN{
