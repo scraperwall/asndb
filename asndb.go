@@ -267,7 +267,8 @@ func parseCSV(reader io.Reader) (*btree.BTree, error) {
 // New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
 func New() (*ASNDB, error) {
 	db := &ASNDB{
-		mutex: sync.Mutex{},
+		mutex:   sync.Mutex{},
+		privIPs: ip.NewIP(),
 	}
 
 	err := db.Reload()
