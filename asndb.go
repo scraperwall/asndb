@@ -42,14 +42,8 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 
 	privNet := a.privIPs.Network(ip)
 	if privNet != nil {
-		return NewASN(privNet.String(), -1, "Private Network")
-	}
-
-	if a.privIPs.IsPrivate(ip) {
-		firstDot := strings.Index(ip.String(), ".")
-		firstNum := ip.String()[0:firstDot]
-
-		privNet := a.privIPs.
+		pasn, _ := NewASN(privNet.String(), "-1", "Private Network")
+		return pasn
 	}
 
 	ipNorm := ip.To16()
