@@ -23,10 +23,8 @@ import (
 )
 
 const (
-	asnURL    = "https://files.phlip.it/GeoLite2-ASN-CSV.zip"
-	asnMd5URL = "https://files.phlip.it/GeoLite2-ASN-CSV.zip.md5"
-	//asnURL    = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip"
-	//asnMd5URL = "http://geolite.maxmind.com/download/geoip/database/GeoLite2-ASN-CSV.zip.md5"
+	asnFile    = "GeoLite2-ASN-CSV.zip"
+	asnMd5File = "GeoLite2-ASN-CSV.zip.md5"
 )
 
 // ASNDB contains a b-tree of ASNs
@@ -55,7 +53,9 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 	defer a.mutex.Unlock()
 	a.db.AscendGreaterOrEqual(&dummy, func(item btree.Item) bool {
 		asn = item.(*ASN)
-
+		if !asn.Network.Contains(ip) {
+			asn, _ = NewASN("0.0.0.0/32", "-1", "Unknown Network")
+		}
 		return false
 	})
 
@@ -88,7 +88,7 @@ type ASN struct {
 func NewASN(cidr string, asnr string, org string) (*ASN, error) {
 	_, network, err := net.ParseCIDR(cidr)
 	if err != nil {
-		return nil, fmt.Errorf("CIDR parse error for %s: %s\n", cidr, err)
+		return nil, fmt.Errorf("cidr parse error for %s: %s", cidr, err)
 	}
 
 	asn, err := strconv.Atoi(asnr)
@@ -137,8 +137,8 @@ func (a *ASN) Less(bt btree.Item) bool {
 }
 
 // Reload pulls fresh data from maxmind
-func (a *ASNDB) Reload() error {
-	asndb, err := FromMaxMind()
+func (a *ASNDB) Reload(baseURL string) error {
+	asndb, err := FromMaxMind(baseURL)
 	if err != nil {
 		return err
 	}
@@ -151,8 +151,9 @@ func (a *ASNDB) Reload() error {
 }
 
 // FromMaxMind loads data from maxmind and creates an ASNDB with this fresh data
-func FromMaxMind() (*btree.BTree, error) {
+func FromMaxMind(baseURL string) (*btree.BTree, error) {
 	// Get MD5 sum for tar.gz file
+	asnMd5URL := baseURL + "/" + asnMd5File
 	resp, err := http.Get(asnMd5URL)
 	if err != nil {
 		return nil, err
@@ -164,6 +165,7 @@ func FromMaxMind() (*btree.BTree, error) {
 	}
 	resp.Body.Close()
 
+	asnURL := baseURL + "/" + asnFile
 	// Load the tar.gz file
 	resp, err = http.Get(asnURL)
 	if err != nil {
@@ -265,13 +267,13 @@ func parseCSV(reader io.Reader) (*btree.BTree, error) {
 }
 
 // New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
-func New() (*ASNDB, error) {
+func New(baseURL string) (*ASNDB, error) {
 	db := &ASNDB{
 		mutex:   sync.Mutex{},
 		privIPs: ip.NewIP(),
 	}
 
-	err := db.Reload()
+	err := db.Reload(baseURL)
 	if err != nil {
 		return nil, err
 	}
