@@ -202,37 +202,7 @@ func FromMaxMind(baseURL string) (*btree.BTree, error) {
 	io.Copy(tmpF, bytes.NewReader(bodyData))
 	tmpF.Close()
 
-	zipReader, err := zip.OpenReader(tmpF.Name())
-	if err != nil {
-		return nil, err
-	}
-	defer zipReader.Close()
-
-	buf := bytes.NewBufferString("")
-
-	// find the data in the zip file
-	for _, f := range zipReader.File {
-		if strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv4.csv") || strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv6.csv") {
-			asn, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-
-			io.Copy(buf, asn)
-		}
-	}
-
-	if buf.Len() <= 0 {
-		return nil, fmt.Errorf("not enough data")
-	}
-
-	// generate the tree
-	tree, err := parseCSV(buf)
-	if err != nil {
-		return nil, err
-	}
-
-	return tree, nil
+	return fromFile(tmpF.Name())
 }
 
 func parseCSV(reader io.Reader) (*btree.BTree, error) {
@@ -266,16 +236,53 @@ func parseCSV(reader io.Reader) (*btree.BTree, error) {
 	return tree, nil
 }
 
+func fromFile(filename string) (*btree.BTree, error) {
+	zipReader, err := zip.OpenReader(filename)
+	if err != nil {
+		return nil, err
+	}
+	defer zipReader.Close()
+
+	buf := bytes.NewBufferString("")
+
+	// find the data in the zip file
+	for _, f := range zipReader.File {
+		if strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv4.csv") || strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv6.csv") {
+			asn, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+
+			io.Copy(buf, asn)
+		}
+	}
+
+	if buf.Len() <= 0 {
+		return nil, fmt.Errorf("not enough data")
+	}
+
+	// generate the tree
+	tree, err := parseCSV(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return tree, nil
+}
+
 // New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
-func New(baseURL string) (*ASNDB, error) {
+func New(baseURLOrFile string) (*ASNDB, error) {
 	db := &ASNDB{
 		mutex:   sync.Mutex{},
 		privIPs: ip.NewIP(),
 	}
 
-	err := db.Reload(baseURL)
-	if err != nil {
-		return nil, err
+	if strings.HasPrefix(baseURLOrFile, "https://") || strings.HasPrefix(baseURLOrFile, "http://") {
+		err := db.Reload(baseURLOrFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
 	}
 
 	return db, nil
