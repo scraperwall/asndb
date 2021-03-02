@@ -6,6 +6,7 @@ import (
 	"crypto/md5"
 	"encoding/csv"
 	"encoding/hex"
+	"errors"
 	"fmt"
 	"io"
 	"io/ioutil"
@@ -14,11 +15,11 @@ import (
 	"net/http"
 	"os"
 	"regexp"
-	"strconv"
 	"strings"
 	"sync"
 
 	"git.scraperwall.com/scw/ip"
+	privip "git.scraperwall.com/scw/ip"
 	"github.com/google/btree"
 )
 
@@ -27,15 +28,15 @@ const (
 	asnMd5File = "GeoLite2-ASN-CSV.zip.md5"
 )
 
-// ASNDB contains a b-tree of ASNs
-type ASNDB struct {
+// DB contains a b-tree of ASNs
+type DB struct {
 	db      *btree.BTree
 	mutex   sync.Mutex
 	privIPs *ip.IP
 }
 
 // Lookup returns the ASN struct of the network that contains ip
-func (a *ASNDB) Lookup(ip net.IP) *ASN {
+func (a *DB) Lookup(ip net.IP) *ASN {
 	var asn *ASN
 
 	privNet := a.privIPs.Network(ip)
@@ -63,84 +64,25 @@ func (a *ASNDB) Lookup(ip net.IP) *ASN {
 }
 
 // Size returns the number of networks in the database
-func (a *ASNDB) Size() int {
+func (a *DB) Size() int {
 	return a.db.Len()
 }
 
 // Each iterates over each element in the database
-func (a *ASNDB) Each(f func(a *ASN) bool) {
+func (a *DB) Each(f func(a *ASN) bool) {
 	a.db.Ascend(func(item btree.Item) bool {
 		return f(item.(*ASN))
 	})
 }
 
-// ASN contains information about a netblock
-type ASN struct {
-	Network      *net.IPNet `json:"network"`
-	From         *net.IP    `json:"from"`
-	To           *net.IP    `json:"to"`
-	Cidr         string     `json:"cidr"`
-	ASN          int        `json:"asn"`
-	Organization string     `json:"organization"`
-}
-
-// NewASN creates a new ASN struct based on cidr, asnr and org
-func NewASN(cidr string, asnr string, org string) (*ASN, error) {
-	_, network, err := net.ParseCIDR(cidr)
-	if err != nil {
-		return nil, fmt.Errorf("cidr parse error for %s: %s", cidr, err)
-	}
-
-	asn, err := strconv.Atoi(asnr)
-	if err != nil {
-		return nil, fmt.Errorf("ASN parse error for %s: %s", asnr, err)
-	}
-
-	ip := network.IP.To16()
-	mask := net.IPMask(make([]byte, net.IPv6len))
-
-	if ip.To4() != nil {
-		for i := 0; i < net.IPv6len-net.IPv4len; i++ {
-			mask[i] = 0xff
-		}
-
-		for i, val := range network.Mask {
-			mask[i+net.IPv6len-net.IPv4len] = val
-		}
-	} else {
-		mask = network.Mask
-	}
-
-	firstIP := net.IP(make([]byte, 16))
-	lastIP := net.IP(make([]byte, 16))
-
-	for i := range ip {
-		firstIP[i] = ip[i] & mask[i]
-		lastIP[i] = ip[i] | ^mask[i]
-	}
-
-	return &ASN{
-		Network:      network,
-		Organization: org,
-		ASN:          asn,
-		From:         &firstIP,
-		To:           &lastIP,
-		Cidr:         cidr,
-	}, nil
-}
-
-// Less determines whether a is lexicographically smaller than bt
-func (a *ASN) Less(bt btree.Item) bool {
-	b := bt.(*ASN)
-
-	return bytes.Compare(*a.To, *b.To) < 0
-}
-
-// Reload pulls fresh data from maxmind
-func (a *ASNDB) Reload(baseURL string) error {
-	asndb, err := FromMaxMind(baseURL)
+// load pulls fresh data from maxmind
+func (a *DB) load(baseURL string) error {
+	asndb, err := fromURL(baseURL)
 	if err != nil {
 		return err
+	}
+	if asndb == nil {
+		return errors.New("asndb is nil")
 	}
 
 	a.mutex.Lock()
@@ -150,8 +92,8 @@ func (a *ASNDB) Reload(baseURL string) error {
 	return nil
 }
 
-// FromMaxMind loads data from maxmind and creates an ASNDB with this fresh data
-func FromMaxMind(baseURL string) (*btree.BTree, error) {
+// fromURL loads data from maxmind and creates an ASNDB with this fresh data
+func fromURL(baseURL string) (*btree.BTree, error) {
 	// Get MD5 sum for tar.gz file
 	asnMd5URL := baseURL + "/" + asnMd5File
 	resp, err := http.Get(asnMd5URL)
@@ -202,37 +144,7 @@ func FromMaxMind(baseURL string) (*btree.BTree, error) {
 	io.Copy(tmpF, bytes.NewReader(bodyData))
 	tmpF.Close()
 
-	zipReader, err := zip.OpenReader(tmpF.Name())
-	if err != nil {
-		return nil, err
-	}
-	defer zipReader.Close()
-
-	buf := bytes.NewBufferString("")
-
-	// find the data in the zip file
-	for _, f := range zipReader.File {
-		if strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv4.csv") || strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv6.csv") {
-			asn, err := f.Open()
-			if err != nil {
-				return nil, err
-			}
-
-			io.Copy(buf, asn)
-		}
-	}
-
-	if buf.Len() <= 0 {
-		return nil, fmt.Errorf("not enough data")
-	}
-
-	// generate the tree
-	tree, err := parseCSV(buf)
-	if err != nil {
-		return nil, err
-	}
-
-	return tree, nil
+	return fromFile(tmpF.Name())
 }
 
 func parseCSV(reader io.Reader) (*btree.BTree, error) {
@@ -266,16 +178,58 @@ func parseCSV(reader io.Reader) (*btree.BTree, error) {
 	return tree, nil
 }
 
-// New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
-func New(baseURL string) (*ASNDB, error) {
-	db := &ASNDB{
-		mutex:   sync.Mutex{},
-		privIPs: ip.NewIP(),
-	}
-
-	err := db.Reload(baseURL)
+func fromFile(filename string) (*btree.BTree, error) {
+	zipReader, err := zip.OpenReader(filename)
 	if err != nil {
 		return nil, err
+	}
+	defer zipReader.Close()
+
+	buf := bytes.NewBufferString("")
+
+	// find the data in the zip file
+	for _, f := range zipReader.File {
+		if strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv4.csv") || strings.HasSuffix(f.Name, "GeoLite2-ASN-Blocks-IPv6.csv") {
+			asn, err := f.Open()
+			if err != nil {
+				return nil, err
+			}
+
+			io.Copy(buf, asn)
+		}
+	}
+
+	if buf.Len() <= 0 {
+		return nil, fmt.Errorf("not enough data")
+	}
+
+	// generate the tree
+	tree, err := parseCSV(buf)
+	if err != nil {
+		return nil, err
+	}
+
+	return tree, nil
+}
+
+// New creates a new ASN database. fname denotes the path to the Maxmind ASN CSV file
+func New(baseURLOrFile string) (*DB, error) {
+	db := &DB{
+		mutex:   sync.Mutex{},
+		privIPs: privip.NewIP(),
+	}
+
+	if strings.HasPrefix(baseURLOrFile, "https://") || strings.HasPrefix(baseURLOrFile, "http://") {
+		err := db.load(baseURLOrFile)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		var err error
+		db.db, err = fromFile(baseURLOrFile)
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	return db, nil
